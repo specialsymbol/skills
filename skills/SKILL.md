@@ -21,7 +21,30 @@ table typing, ZIP handling, and batch strategies.
 
 ---
 
-## Step 0 — File Diagnosis: Is It Actually a PDF?
+## Step 0 — Is the Content Already in Context?
+
+**Before touching any tool**, check whether the PDF was already rendered into the conversation context.
+
+Claude's platform automatically renders uploaded PDFs as images and injects them as `<document>` blocks (one per page) in the context window. When this happens, **no bash tools, no rasterization, and no OCR are needed** — Claude can read the pages directly using its vision capability.
+
+**How to recognise this case:**
+
+- The system prompt or conversation contains `<document>` tags with `media_type="application/pdf"` and `<document_content page="N">` children.
+- The pages are visually legible in context (text, tables, diagrams are all visible).
+
+**Decision rule:**
+
+| Situation | Action |
+|-----------|--------|
+| `<document>` tags present, pages legible | Transcribe directly — **do not use bash_tool, pdftotext, or pdftoppm** |
+| `<document>` tags present, pages blank/corrupt | Fall through to Step 0a (file diagnosis) |
+| No `<document>` tags, only a file path | Proceed to Step 0a (file diagnosis) |
+
+**Important language note:** When the content arrives via `<document>` tags, the PDF is *scan-only from Claude's perspective* (rendered as images), even if the underlying file contains extractable text. Do NOT describe this as "binary encoded" or "compressed" — the correct description is: *"The PDF content is already available as rendered page images in context; direct transcription is possible without any tools."*
+
+---
+
+## Step 0a — File Diagnosis: Is It Actually a PDF?
 
 **Before** running `pdfinfo`, verify the file is a real PDF:
 
@@ -230,7 +253,7 @@ for row in table:
 
 ### Variable Section Headers (Multi-Group Column Headers)
 
-Some tables use compound headers like `Type A | Type B | Ingestion` spanning multiple data columns. General approach:
+Some tables use compound headers like `Group A | Group B | Category C` spanning multiple data columns. General approach:
 
 1. Parse the header section text to identify groups and their column counts.
 2. Build a `col_map = [(group_name, sub_label), ...]` list matching data column count.
@@ -239,7 +262,7 @@ Some tables use compound headers like `Type A | Type B | Ingestion` spanning mul
 For complex cases (OCR artefacts, concatenated labels, spaced-out characters), normalize before parsing:
 ```python
 import re
-text = re.sub(r'([A-Z])\s(?=[A-Z])', r'\1', text)  # "I n h a l a t i o n" → "Inhalation"
+text = re.sub(r'([A-Z])\s(?=[A-Z])', r'\1', text)  # "S P A C E D" → "SPACED" (letter-spaced OCR artefact)
 text = re.sub(r'\s+', ' ', text).strip()
 ```
 
@@ -376,6 +399,7 @@ Use `normalize_cell(c)` everywhere instead of the plain `.replace('\n', ' ').str
 
 | Task | Tool |
 |------|------|
+| PDF pages already in context as `<document>` tags | No tool — transcribe directly via vision |
 | Verify actual file type | `file document.pdf` |
 | Unpack ZIP-disguised PDF | `unzip document.pdf -d /tmp/extracted` |
 | Read manifest (ZIP format) | Python `json.load()` on `manifest.json` |
